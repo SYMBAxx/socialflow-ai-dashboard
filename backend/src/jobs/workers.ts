@@ -1,203 +1,58 @@
 import { queueManager } from '../queues/queueManager';
-import { Worker } from 'bullmq';
+import { Job, UnrecoverableError, Worker } from 'bullmq';
 import { moderate } from '../services/ModerationService';
 import { MODERATION_QUEUE_NAME, enqueueToDLQ } from '../queues/moderationQueue';
 import { getSmsService } from '../services/smsService';
 import { createLogger } from '../lib/logger';
 import { circuitBreakerService } from '../services/CircuitBreakerService';
+import { processEmailJob, createEmailWorker } from './emailJob';
+import { processPayoutJob, createPayoutWorker } from './payoutJob';
 
 const logger = createLogger('workers');
 
-// Email job processor
-async function processEmailJob(job: any) {
-  const {
-    to,
-    subject: _subject,
-    body: _body,
-    html: _html,
-    attachments: _attachments,
-    metadata,
-  } = job.data;
-
-  console.log(`Processing email job ${job.id}: sending to ${to}`);
-
-  // Simulate email sending - replace with actual email service
-  // const emailService = require('../services/emailService').emailService;
-  // await emailService.send({ to, subject, body, html, attachments });
-
-  // For now, simulate processing time
-  await new Promise((resolve) => setTimeout(resolve, 100));
-
-  console.log(`Email job ${job.id} completed: sent to ${to}`);
-
-  return {
-    success: true,
-    emailId: job.id,
-    recipient: to,
-    sentAt: new Date().toISOString(),
-    metadata,
-  };
-}
-
-// Payout job processor
-async function processPayoutJob(job: any) {
-  const {
-    groupId,
-    amount,
-    recipient,
-    recipientType: _recipientType,
-    currency,
-    description: _description,
-    metadata,
-  } = job.data;
-
-  console.log(`Processing payout job ${job.id}: ${amount} ${currency} to ${recipient}`);
-
-  // Simulate payout processing - replace with actual payment service
-  // const paymentService = require('../services/paymentService').paymentService;
-  // await paymentService.process({ groupId, amount, recipient, recipientType, currency });
-
-  // For now, simulate processing time
-  await new Promise((resolve) => setTimeout(resolve, 500));
-
-  console.log(`Payout job ${job.id} completed: ${amount} ${currency} sent to ${recipient}`);
-
-  return {
-    success: true,
-    transactionId: job.id,
-    groupId,
-    amount,
-    currency,
-    recipient,
-    status: 'completed',
-    processedAt: new Date().toISOString(),
-    metadata,
-  };
-}
-
-// Sync job processors
-async function processSyncAccountJob(job: any) {
-  const { accountId, metadata } = job.data;
-
-  console.log(`Processing account sync job ${job.id}: syncing account ${accountId}`);
-
-  // Simulate blockchain sync - replace with actual blockchain service
-  // const blockchainService = require('../services/blockchainService').blockchainService;
-  // await blockchainService.syncAccount(accountId);
-
-  await new Promise((resolve) => setTimeout(resolve, 300));
-
-  console.log(`Account sync job ${job.id} completed for account ${accountId}`);
-
-  return {
-    success: true,
+/**
+ * Sync job processors.
+ *
+ * There is no blockchain service layer wired into the backend yet, so these
+ * processors cannot perform a real account/transaction/balance/contract sync.
+ * Rather than fabricating `success: true` (which hides the fact that nothing
+ * was synced from job stats, alerting and callers), each processor fails the
+ * job with an UnrecoverableError so it is marked failed without burning
+ * retries. Replace the body with the real service call once it exists.
+ */
+function failUnimplementedSync(job: Job, operation: string): never {
+  logger.error(`Sync job ${job.id} (${job.name}) failed: ${operation} is not implemented`, {
     jobId: job.id,
-    accountId,
-    syncedAt: new Date().toISOString(),
-    metadata,
-  };
-}
-
-async function processSyncTransactionsJob(job: any) {
-  const { accountId, startBlock, endBlock, metadata } = job.data;
-
-  console.log(
-    `Processing transactions sync job ${job.id}: syncing ${accountId} blocks ${startBlock}-${endBlock}`,
+    jobName: job.name,
+    operation,
+  });
+  throw new UnrecoverableError(
+    `Sync operation "${operation}" is not implemented: no blockchain service is configured`,
   );
-
-  // Simulate transaction sync
-  await new Promise((resolve) => setTimeout(resolve, 400));
-
-  console.log(`Transactions sync job ${job.id} completed`);
-
-  return {
-    success: true,
-    jobId: job.id,
-    accountId,
-    startBlock,
-    endBlock,
-    syncedAt: new Date().toISOString(),
-    metadata,
-  };
 }
 
-async function processSyncBalancesJob(job: any) {
-  const { accountId, metadata } = job.data;
-
-  console.log(`Processing balance sync job ${job.id}: syncing balances for ${accountId}`);
-
-  await new Promise((resolve) => setTimeout(resolve, 200));
-
-  console.log(`Balance sync job ${job.id} completed`);
-
-  return {
-    success: true,
-    jobId: job.id,
-    accountId,
-    syncedAt: new Date().toISOString(),
-    metadata,
-  };
+async function processSyncAccountJob(job: Job): Promise<never> {
+  return failUnimplementedSync(job, 'syncAccount');
 }
 
-async function processFullSyncJob(job: any) {
-  const { accountId, metadata } = job.data;
-
-  console.log(`Processing full sync job ${job.id}: full sync for ${accountId}`);
-
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-
-  console.log(`Full sync job ${job.id} completed`);
-
-  return {
-    success: true,
-    jobId: job.id,
-    accountId,
-    syncedAt: new Date().toISOString(),
-    metadata,
-  };
+async function processSyncTransactionsJob(job: Job): Promise<never> {
+  return failUnimplementedSync(job, 'syncTransactions');
 }
 
-async function processSyncContractJob(job: any) {
-  const { contractId, contractType, action, metadata } = job.data;
-
-  console.log(
-    `Processing contract sync job ${job.id}: ${action} ${contractType} contract ${contractId}`,
-  );
-
-  await new Promise((resolve) => setTimeout(resolve, 500));
-
-  console.log(`Contract sync job ${job.id} completed`);
-
-  return {
-    success: true,
-    jobId: job.id,
-    contractId,
-    contractType,
-    action,
-    syncedAt: new Date().toISOString(),
-    metadata,
-  };
+async function processSyncBalancesJob(job: Job): Promise<never> {
+  return failUnimplementedSync(job, 'syncBalances');
 }
 
-async function processDeployContractJob(job: any) {
-  const { contractId, contractType, metadata } = job.data;
+async function processFullSyncJob(job: Job): Promise<never> {
+  return failUnimplementedSync(job, 'fullSync');
+}
 
-  console.log(
-    `Processing contract deploy job ${job.id}: deploying ${contractType} contract ${contractId}`,
-  );
+async function processSyncContractJob(job: Job): Promise<never> {
+  return failUnimplementedSync(job, 'syncContract');
+}
 
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-
-  console.log(`Contract deploy job ${job.id} completed`);
-
-  return {
-    success: true,
-    jobId: job.id,
-    contractId,
-    contractType,
-    deployedAt: new Date().toISOString(),
-    metadata,
-  };
+async function processDeployContractJob(job: Job): Promise<never> {
+  return failUnimplementedSync(job, 'deployContract');
 }
 
 // Notification job processor
@@ -300,17 +155,13 @@ const workerConfigs = {
 export function initializeWorkers(): Map<string, Worker> {
   const workers = new Map<string, Worker>();
 
-  // Email worker
-  const emailWorker = queueManager.createWorker('email', processEmailJob, {
-    concurrency: workerConfigs.email.concurrency,
-  });
-  workers.set('email', emailWorker);
+  // Email worker — SES-aware processor from emailJob.ts (non-retryable error
+  // handling, email_dropped_total metric, drop-rate alerting)
+  workers.set('email', createEmailWorker());
 
-  // Payout worker
-  const payoutWorker = queueManager.createWorker('payout', processPayoutJob, {
-    concurrency: workerConfigs.payout.concurrency,
-  });
-  workers.set('payout', payoutWorker);
+  // Payout worker — idempotent/locked processor from payoutJob.ts
+  // (transaction-hash dedup, LockService lock, PayoutTransaction/PayoutFailure persistence)
+  workers.set('payout', createPayoutWorker());
 
   // Sync workers
   const syncWorker = queueManager.createWorker(
@@ -332,8 +183,7 @@ export function initializeWorkers(): Map<string, Worker> {
         case 'deploy-contract':
           return processDeployContractJob(job);
         default:
-          console.warn(`Unknown sync job type: ${jobName}`);
-          return { success: false, error: 'Unknown job type' };
+          throw new UnrecoverableError(`Unknown sync job type: ${jobName}`);
       }
     },
     {
